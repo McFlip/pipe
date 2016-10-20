@@ -1,3 +1,8 @@
+/* Grady C Denton
+ * gcd15b
+ * cop4610
+ * project 3
+ */
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <stdio.h>
@@ -12,20 +17,20 @@
 
 int main(int argc, char *argv[])
 {
-  int p2cPipefd[2];
+  int p2cPipefd[2];  //pipe file descriptors
   int c2pPipefd[2];
-  pid_t cpid;
-  int buf;
-	const int sz = 4096;
-	int zero = 0;
-  const size_t pipeMsgSize = sizeof(int);
-	FILE *inFile, *outFile;
-	char confirm[5];
-	char test[]="Please Baby Jesus Help ME!";
+  pid_t cpid;  //process id
+  int buf;  //for pipe messages
+	const int sz = 4096;  //block size of shared mem
+	int zero = 0;  //used to terminate exchange
+  const size_t pipeMsgSize = sizeof(int);  //passing ints
+	FILE *inFile, *outFile;  //input and output file
+	char confirm[5];  //confirm overwrite
 	const char *name = "/gcd15b";	// shared file name
 	int shm_fd;		// file descriptor, from shm_open()
   char *shm_base;	// base address, from mmap()
 
+	/*open the files and error check*/
   if (argc != 3) {
     fprintf(stderr, "Usage: trans input-file output-file\n");
     exit(EXIT_FAILURE);
@@ -54,11 +59,12 @@ int main(int argc, char *argv[])
 		}
 	}
 
-  if (pipe(p2cPipefd) == -1) {
+  /*creat pipes*/
+  if (pipe(p2cPipefd) == -1) {  //parent to child
     perror("pipe");
     exit(EXIT_FAILURE);
   }
-  if (pipe(c2pPipefd) == -1) {
+  if (pipe(c2pPipefd) == -1) {  //child to parent
 		perror("pipe");
 		exit(EXIT_FAILURE);
 	}
@@ -68,11 +74,13 @@ int main(int argc, char *argv[])
     perror("fork");
     exit(EXIT_FAILURE);
   }
-  if (cpid == 0) {    /* Child process */
+
+  /* Child process */
+  if (cpid == 0) {
 		int cBlockNum=1, cBlockSz=0;
 		close(p2cPipefd[1]);          /* Close unused write end */
 		close(c2pPipefd[0]);          /* Close unused read end */
-    //TODO: open shared mem
+    //open shared mem
 		shm_fd = shm_open(name, O_RDONLY, 0666);
 		if (shm_fd == -1) {
 			printf("cons: Shared memory failed: %s\n", strerror(errno));
@@ -94,21 +102,15 @@ int main(int argc, char *argv[])
 			}
 			_exit(EXIT_FAILURE);
 		}
-		printf("check c1 \n");
-    while (read(p2cPipefd[0], &buf, pipeMsgSize) > 0){
-			printf("check c2 \n");
-			if(buf != 0){    /* read block # and size */
+	    /* read block # and size */
+	    while (read(p2cPipefd[0], &buf, pipeMsgSize) > 0){
+			if(buf != 0){
         cBlockNum = buf;
 				read(p2cPipefd[0], &buf, pipeMsgSize);
 				cBlockSz = buf;
-				printf("told to read %d bytes\n", cBlockSz);
-        //TODO:read from the shared mem and write to the copy
-				printf("child reads\n");
-				write(STDOUT_FILENO, shm_base, cBlockSz);
-				printf("\n");
-				int out = fwrite(shm_base, cBlockSz, 1, outFile);
+        //read from the shared mem and write to output file
+				fwrite(shm_base, cBlockSz, 1, outFile);
 				fflush(outFile);
-				printf("wrote out %d blocks\n", out);
 				if(ferror(outFile)) {
 					perror("error writing to output file");
 					write(c2pPipefd[1], &zero, pipeMsgSize);
@@ -117,10 +119,8 @@ int main(int argc, char *argv[])
 					_exit(EXIT_FAILURE);
 				}
         write(c2pPipefd[1], &cBlockNum, pipeMsgSize);
-				printf("check c3 \n");
       }  else{    /* done. close out and msg 0 to parent */
 				write(c2pPipefd[1], &zero, pipeMsgSize);
-        //TODO: unlink shared mem
 				/* remove the mapped shared memory segment from the address space of the process */
 				if (munmap(shm_base, sz) == -1) {
 					printf("cons: Unmap failed: %s\n", strerror(errno));
@@ -138,16 +138,15 @@ int main(int argc, char *argv[])
 				}
       }
     }
+    /*close pipes*/
     close(p2cPipefd[0]);
 		close(c2pPipefd[1]);
     _exit(EXIT_SUCCESS);
 
   } else {            /* Parent process */
-		printf("check p1 \n");
 		int pBlockNum=1, pBlockSz=0;
 		close(p2cPipefd[0]);          /* Close unused read end */
 		close(c2pPipefd[1]);          /* Close unused write end */
-    //TODO: create shared mem
 		/* create the shared memory segment as if it was a file */
 		shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
 		if (shm_fd == -1) {
@@ -160,34 +159,31 @@ int main(int argc, char *argv[])
 		shm_base = mmap(0, sz, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 		if (shm_base == MAP_FAILED) {
 			printf("prod: Map failed: %s\n", strerror(errno));
-			// close and shm_unlink?
+			close(shm_fd);
 			_exit(EXIT_FAILURE);
 		}
     do {
-			//TODO: copy to shared mem
-			pBlockSz = fread(shm_base, 1, sz, inFile);
-			printf("%d bytes read from the inFile\n", pBlockSz);
+			/*copy to shared mem*/
+			pBlockSz = fread(shm_base, 1, sz, inFile); //read 1 byte at a time up to 4k times
 			if (ferror(inFile)) {
 				perror("error reading from input file");
 				break;
 			}
 			if (pBlockSz == 0) {
 				write(p2cPipefd[1], &zero, pipeMsgSize);
-				printf("hit the eof\n");
 			} else {
-				write(p2cPipefd[1], &pBlockNum, pipeMsgSize);
-				write(p2cPipefd[1], &pBlockSz, pipeMsgSize);
+				write(p2cPipefd[1], &pBlockNum, pipeMsgSize); //send block number to child
+				write(p2cPipefd[1], &pBlockSz, pipeMsgSize); //send block size
 				++pBlockNum;
 			}
-			printf("check p2 \n");
+			/*wait for child acknowledgement*/
 			read(c2pPipefd[0], &buf, pipeMsgSize);
 		} while (buf > 0);
 
+		/*cleanup*/
     close(p2cPipefd[1]);          /* Reader will see EOF */
 		close(c2pPipefd[0]);
-		printf("check p3 \n");
     wait(NULL);                /* Wait for child */
-		printf("check p4 \n");
 		/* remove the mapped memory segment from the address space of the process */
 	  if (munmap(shm_base, sz) == -1) {
 			printf("prod: Unmap failed: %s\n", strerror(errno));
